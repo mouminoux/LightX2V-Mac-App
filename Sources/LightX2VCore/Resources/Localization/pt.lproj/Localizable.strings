@@ -118,6 +118,7 @@
 "Downloading llama.cpp · %.1f MB" = "A transferir llama.cpp · %.1f MB";
 "Downloading source · %.1f MB" = "A transferir código · %.1f MB";
 "Drag a local image file here." = "Arraste um ficheiro de imagem local.";
+"Each image is generated one after another with its own seed" = "As imagens são geradas uma após a outra, cada uma com sua própria semente";
 "Encoding prompt" = "A codificar prompt";
 "Enhanced" = "Melhorado";
 "Enhanced prompt is empty or too long" = "Prompt melhorado vazio ou demasiado longo";
@@ -163,6 +164,7 @@
 "HF download failed. Retry or download manually using the guide.\n" = "Falha HF. Tente novamente ou transfira manualmente.\n";
 "I2I model" = "Modelo I2I";
 "I2I system prompt" = "Prompt de sistema I2I";
+"Image %@ of %@" = "Imagem %@ de %@";
 "Image %@: %@" = "Imagem %@: %@";
 "Image generation" = "Geração de imagens";
 "Image generation model" = "Modelo de geração de imagens";
@@ -228,6 +230,7 @@
 "Not configured" = "Por configurar";
 "Not installed" = "Não instalado";
 "Not selected" = "Não selecionado";
+"Number of images" = "Número de imagens";
 "OK" = "OK";
 "Open Hugging Face" = "Abrir Hugging Face";
 "Open LightX2V GitHub" = "Abrir LightX2V no GitHub";

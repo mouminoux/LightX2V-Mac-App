@@ -118,6 +118,7 @@
 "Downloading llama.cpp · %.1f MB" = "llama.cppをダウンロード中 · %.1f MB";
 "Downloading source · %.1f MB" = "ソースをダウンロード中 · %.1f MB";
 "Drag a local image file here." = "ローカルの画像ファイルをドラッグしてください。";
+"Each image is generated one after another with its own seed" = "画像は1枚ずつ順番に、それぞれ異なるシードで生成されます";
 "Encoding prompt" = "プロンプトをエンコード中";
 "Enhanced" = "強化済み";
 "Enhanced prompt is empty or too long" = "強化プロンプトが空か長すぎます";
@@ -163,6 +164,7 @@
 "HF download failed. Retry or download manually using the guide.\n" = "HFダウンロード失敗。再試行するか手動で取得してください。\n";
 "I2I model" = "I2Iモデル";
 "I2I system prompt" = "I2Iシステムプロンプト";
+"Image %@ of %@" = "%@ / %@ 枚目";
 "Image %@: %@" = "画像%@：%@";
 "Image generation" = "画像生成";
 "Image generation model" = "画像生成モデル";
@@ -228,6 +230,7 @@
 "Not configured" = "未設定";
 "Not installed" = "未インストール";
 "Not selected" = "未選択";
+"Number of images" = "画像の枚数";
 "OK" = "OK";
 "Open Hugging Face" = "Hugging Faceを開く";
 "Open LightX2V GitHub" = "LightX2V GitHubを開く";

@@ -54,6 +54,19 @@ final class AppStore: ObservableObject {
     @Published var modelPreparationExpanded = false
     @Published var generationParametersExpanded = false
     @Published var generationSize = GenerationSize() { didSet { saveCreationParameters() } }
+    @Published var imageCount = 1 { didSet { if oldValue != imageCount { saveCreationParameters() } } }
+    /// Remaining images of the submission that is currently running.
+    private struct Batch {
+        let creationID: UUID
+        let prompt: String
+        let inputImages: [InputImage]
+        let size: GenerationSize
+        let enhancementEnabled: Bool
+        let total: Int
+        var index: Int
+    }
+    private var batch: Batch?
+    @Published private(set) var batchProgress: (index: Int, total: Int)?
     private(set) var creationSettings: [String: CreationSettings] = [:]
     private var restoringCreationParameters = false
     var currentCreationID: UUID { selected?.creationID ?? draftCreationID }
@@ -216,7 +229,8 @@ final class AppStore: ObservableObject {
     private func saveCreationParameters() {
         guard !restoringCreationParameters, !restoringModelPaths, !isPreparingWorkspace else { return }
         creationSettings[currentCreationID.uuidString] = CreationSettings(modelName: selectedModel?.title ?? QwenImage21Turbo.title,
-                                                                        size: generationSize, enhancementEnabled: settings.promptEnhancement.enabled)
+                                                                        size: generationSize, enhancementEnabled: settings.promptEnhancement.enabled,
+                                                                        imageCount: imageCount)
         persist()
     }
 
@@ -225,6 +239,7 @@ final class AppStore: ObservableObject {
         defer { restoringCreationParameters = false }
         let saved = creationSettings[currentCreationID.uuidString] ?? CreationSettings()
         generationSize = saved.size
+        imageCount = saved.parameters.imageCount
         settings.promptEnhancement.enabled = saved.promptEnhancement.enabled
         // Startup still requires explicit model selection. History switches retain
         // the selected model when a model has already been chosen in this session.
@@ -236,7 +251,7 @@ final class AppStore: ObservableObject {
         restoringCreationParameters = true
         selectedID = nil; prompt = ""; showLogs = false
         draftCreationID = UUID()
-        generationSize = GenerationSize(); settings.promptEnhancement.enabled = true
+        generationSize = GenerationSize(); imageCount = 1; settings.promptEnhancement.enabled = true
         restoringCreationParameters = false
         clearInputImages()
         saveCreationParameters()
@@ -633,54 +648,82 @@ final class AppStore: ObservableObject {
         guard selectedModel != nil else { errorMessage = L10n.english("Choose a model first."); return }
         guard !needsGeneralSetup else { showSettings = true; return }
         guard environmentReady else { showSettings = true; return }
+        let count = min(max(imageCount, CreationSettings.imageCountRange.lowerBound), CreationSettings.imageCountRange.upperBound)
+        let submission = Batch(creationID: selected?.creationID ?? draftCreationID, prompt: prompt, inputImages: inputImages,
+                               size: generationSize, enhancementEnabled: settings.promptEnhancement.enabled, total: count, index: 1)
         do {
-            try settings.validatePaths()
-            try ModelResource.turbo.validate(directory: settings.model)
-            if settings.promptEnhancement.enabled && (try? settings.promptEnhancement.validate(for: enhancementMode)) == nil {
-                showModelPreparation()
-                errorMessage = L10n.english("Configure complete enhancement model directories in model preparation, or turn off prompt enhancement.")
-                return
-            }
-            let seed = Int64.random(in: 0...4294967295)
-            let id = UUID()
-            let formatter = DateFormatter(); formatter.dateFormat = "yyyyMMdd-HHmmss"
-            let directory = URL(fileURLWithPath: settings.outputDirectory)
-                .appendingPathComponent(formatter.string(from: Date()) + "-" + id.uuidString.prefix(8))
-            var runSettings = settings
-            if runSettings.promptEnhancement.enabled { runSettings.promptEnhancement = try runSettings.promptEnhancement.resolvedResources(for: enhancementMode) }
-            var request = try InferenceRequest(settings: runSettings, prompt: prompt, width: width, height: height,
-                                               seed: seed, output: directory.appendingPathComponent("image.png").path,
-                                               inputImages: inputImages, resolution: generationSize.automaticResolution)
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            request.config = try QwenImage21Turbo.writeConfig(in: directory)
-            request.inputImages = try InputImages.snapshot(inputImages, in: directory)
-            let requestURL = directory.appendingPathComponent("request.json")
-            var generation = Generation(id: id, creationID: selected?.creationID ?? draftCreationID, request: request)
-            generation.python = settings.python
-            try JSONFile.write(GenerationRequestDocument(generation), to: requestURL)
-            try JSONFile.write(generation, to: directory.appendingPathComponent("generation.json"))
-            let logFile = try GenerationLog(directory: directory) { [weak self] message in self?.errorMessage = message }
-            generations.insert(generation, at: 0)
-            activeLogFile = logFile; activeLog = ""; activeID = id; selectedID = id
-            startedAt = Date(); phase = generation.enhancement == nil ? L10n.english("Starting inference") : L10n.english("Starting prompt enhancement"); currentStep = 0
-            appendLog(L10n.english("Task: %@\nStarted: %@\n%@\n", [String(describing: id.uuidString), String(describing: generation.createdAt.ISO8601Format()), String(describing: phase)]))
-            isRunning = true; isStopping = false; receivedDone = false
-            persist()
-            let process = ProcessRunner(); runner = process
-            do {
-                try process.start(python: settings.python, bridge: bridgePath, mode: "run", request: requestURL.path, workspace: settings.workingDirectory,
-                                  onEvent: { [weak self] event in self?.receive(event, for: id) },
-                                  onExit: { [weak self] code in self?.exited(code, for: id) })
-                // Clear only after launch succeeds; the submitted prompt remains in history.
-                prompt = ""
-                clearInputImages()
-            } catch {
-                markFinished(id, status: .failed, message: error.localizedDescription)
-                activeLogFile?.close(); activeLogFile = nil
-                isRunning = false; runner = nil; activeID = nil
-                throw error
-            }
-        } catch { errorMessage = error.localizedDescription }
+            try startRun(submission)
+            // Clear only after launch succeeds; the submitted prompt remains in history.
+            prompt = ""
+            clearInputImages()
+        } catch { batch = nil; batchProgress = nil; errorMessage = error.localizedDescription }
+    }
+
+    /// Starts the next image of a batch after the previous one completed.
+    private func continueBatch() {
+        guard var next = batch, next.index < next.total, terminationCompletion == nil else { batch = nil; batchProgress = nil; return }
+        next.index += 1
+        do { try startRun(next) }
+        catch { batch = nil; batchProgress = nil; errorMessage = error.localizedDescription }
+    }
+
+    private func startRun(_ submission: Batch) throws {
+        let mode: PromptEnhancementMode = submission.inputImages.isEmpty ? .t2i : .i2i
+        try settings.validatePaths()
+        try ModelResource.turbo.validate(directory: settings.model)
+        if submission.enhancementEnabled && (try? settings.promptEnhancement.validate(for: mode)) == nil {
+            showModelPreparation()
+            throw AppError.message(L10n.english("Configure complete enhancement model directories in model preparation, or turn off prompt enhancement."))
+        }
+        let seed = Int64.random(in: 0...4294967295)
+        let id = UUID()
+        let formatter = DateFormatter(); formatter.dateFormat = "yyyyMMdd-HHmmss"
+        let directory = URL(fileURLWithPath: settings.outputDirectory)
+            .appendingPathComponent(formatter.string(from: Date()) + "-" + id.uuidString.prefix(8))
+        var runSettings = settings
+        runSettings.promptEnhancement.enabled = submission.enhancementEnabled
+        if runSettings.promptEnhancement.enabled { runSettings.promptEnhancement = try runSettings.promptEnhancement.resolvedResources(for: mode) }
+        let dimensions = submission.size.dimensions
+        var request = try InferenceRequest(settings: runSettings, prompt: submission.prompt, width: dimensions?.width, height: dimensions?.height,
+                                           seed: seed, output: directory.appendingPathComponent("image.png").path,
+                                           inputImages: submission.inputImages, resolution: submission.size.automaticResolution)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        request.config = try QwenImage21Turbo.writeConfig(in: directory)
+        request.inputImages = try InputImages.snapshot(submission.inputImages, in: directory)
+        let requestURL = directory.appendingPathComponent("request.json")
+        var generation = Generation(id: id, creationID: submission.creationID, request: request)
+        generation.python = settings.python
+        try JSONFile.write(GenerationRequestDocument(generation), to: requestURL)
+        try JSONFile.write(generation, to: directory.appendingPathComponent("generation.json"))
+        let logFile = try GenerationLog(directory: directory) { [weak self] message in self?.errorMessage = message }
+        generations.insert(generation, at: 0)
+        activeLogFile = logFile; activeLog = ""; activeID = id
+        // Later batch images follow the conversation only while the user is still viewing it.
+        if submission.index == 1 || selected?.creationID == submission.creationID { selectedID = id }
+        startedAt = Date(); phase = generation.enhancement == nil ? L10n.english("Starting inference") : L10n.english("Starting prompt enhancement"); currentStep = 0
+        appendLog(L10n.english("Task: %@\nStarted: %@\n%@\n", [String(describing: id.uuidString), String(describing: generation.createdAt.ISO8601Format()), String(describing: phase)]))
+        if submission.total > 1 {
+            appendLog(L10n.english("Image %@ of %@\n", [String(describing: submission.index), String(describing: submission.total)]))
+        }
+        isRunning = true; isStopping = false; receivedDone = false
+        persist()
+        let process = ProcessRunner(); runner = process
+        do {
+            try process.start(python: settings.python, bridge: bridgePath, mode: "run", request: requestURL.path, workspace: settings.workingDirectory,
+                              onEvent: { [weak self] event in self?.receive(event, for: id) },
+                              onExit: { [weak self] code in self?.exited(code, for: id) })
+        } catch {
+            markFinished(id, status: .failed, message: error.localizedDescription)
+            activeLogFile?.close(); activeLogFile = nil
+            isRunning = false; runner = nil; activeID = nil
+            throw error
+        }
+        if submission.total > 1 {
+            // Later images reuse the first run's input snapshots, since the draft copies are cleared.
+            batch = Batch(creationID: submission.creationID, prompt: submission.prompt, inputImages: request.inputImages,
+                          size: submission.size, enhancementEnabled: submission.enhancementEnabled, total: submission.total, index: submission.index)
+            batchProgress = (submission.index, submission.total)
+        } else { batch = nil; batchProgress = nil }
     }
 
     private func receive(_ event: [String: Any], for id: UUID) {
@@ -793,8 +836,11 @@ final class AppStore: ObservableObject {
             markFinished(id, status: isStopping ? .cancelled : .failed,
                          message: isStopping ? L10n.english("Generation stopped") : L10n.english("Inference process exited unexpectedly (%@). Check the run log.", [String(describing: code)]))
         }
+        let completed = generations.first { $0.id == id }?.status == .completed
         activeLogFile?.close(); activeLogFile = nil
         isRunning = false; isStopping = false; runner = nil; activeID = nil
+        // A stop, failure or quit ends the whole batch; completed images stay in history.
+        if completed { continueBatch() } else { batch = nil; batchProgress = nil }
         finishTerminationIfNeeded()
     }
 

@@ -57,9 +57,11 @@ func creationChecks() async throws {
     try Data("{}".utf8).write(to: config)
     let script = """
     #!/usr/bin/env python3
-    import json, shutil, sys
+    import json, shutil, sys, time
     from pathlib import Path
     request = json.load(open(sys.argv[-1]))
+    if request["prompt"] == "Slow batch":
+        time.sleep(10)
     fixture = "fixture-second.png" if request["prompt"] == "Independent second scene" else "fixture.png"
     shutil.copyfile(Path(__file__).with_name(fixture), request["output"])
     print(json.dumps({"type":"done", "status":"completed", "duration":0.1}), flush=True)
@@ -132,6 +134,7 @@ func creationChecks() async throws {
     try check(fourth.creationID == first.creationID && fourth.request.inputImages.isEmpty && store.selectedCreation.count == 5,
               "normal generation after reference remains text-only in the same conversation")
     store.newGeneration()
+    store.setPromptEnhancementEnabled(false) // New creations enable PE; this fixture has no PE models.
     let fifth = try await submit("Explicitly new creation")
     try check(fifth.creationID != first.creationID && store.recentCreations.count == 2 && store.selectedCreation.count == 1,
               "only explicit New Creation starts a separate conversation")
@@ -182,4 +185,28 @@ func creationChecks() async throws {
     store.removeFromHistory(first)
     try check(store.generations.map(\.id) == [fifth.id] && fm.fileExists(atPath: first.request.output),
               "removing a creation removes all its history turns and preserves output files")
+    store.newGeneration()
+    try check(store.imageCount == 1, "new creation defaults to generating one image")
+    store.setPromptEnhancementEnabled(false)
+    store.imageCount = 3
+    store.prompt = "Batch scene"
+    store.generate()
+    try check(store.isRunning && store.prompt.isEmpty && store.batchProgress?.index == 1 && store.batchProgress?.total == 3,
+              "multi-image submission starts a batch and clears only the draft")
+    try await wait({ store.isRunning })
+    let batch = store.selectedCreation
+    try check(batch.count == 3 && batch.allSatisfy { $0.status == .completed && $0.request.prompt == "Batch scene" }
+              && Set(batch.map(\.request.seed)).count == 3 && Set(batch.map(\.request.output)).count == 3
+              && batch.allSatisfy { fm.fileExists(atPath: $0.request.output) },
+              "batch generates each requested image in the same creation with its own seed and output")
+    try check(store.batchProgress == nil && store.imageCount == 3 && store.recentCreations.count == 2,
+              "finished batch keeps the chosen count and a single sidebar entry")
+    store.newGeneration(); store.setPromptEnhancementEnabled(false); store.imageCount = 3
+    store.prompt = "Slow batch"
+    store.generate()
+    try await Task.sleep(for: .milliseconds(300))
+    store.stop()
+    try await wait({ store.isRunning })
+    try check(store.selectedCreation.count == 1 && store.selectedCreation[0].status == .cancelled && store.batchProgress == nil,
+              "stopping a batch cancels the current image and every remaining one")
 }

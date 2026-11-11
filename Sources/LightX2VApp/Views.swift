@@ -462,6 +462,10 @@ struct GenerationTurnView: View {
                     VStack(spacing: 17) {
                         ProgressView().controlSize(.regular).tint(Palette.ink)
                         Text(L10n.render(store.phase)).font(.system(size: 13, weight: .medium))
+                        if job.id == store.activeID, let batch = store.batchProgress {
+                            Text(L10n.text("Image %@ of %@", [String(batch.index), String(batch.total)]))
+                                .font(.system(size: 11)).monospacedDigit().foregroundStyle(Palette.muted)
+                        }
                         HStack(spacing: 5) {
                             ForEach(1...QwenImage21Turbo.inferenceSteps, id: \.self) { index in
                                 Capsule().fill(index < store.currentStep ? Palette.ink : index == store.currentStep ? Palette.ink.opacity(0.45) : Palette.line)

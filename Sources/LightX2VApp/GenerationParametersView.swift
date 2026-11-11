@@ -51,6 +51,20 @@ struct GenerationParametersView: View {
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(L10n.text("Output size"))
             .accessibilityValue(store.generationSize.dimensions.map { L10n.text("Width %@, height %@ pixels", [String(describing: $0.width), String(describing: $0.height)]) } ?? L10n.text("Automatic"))
+
+            HStack(spacing: 8) {
+                label(L10n.text("Number of images"))
+                Spacer(minLength: 0)
+                Text(String(store.imageCount))
+                    .font(.system(size: 12, weight: .medium, design: .monospaced)).monospacedDigit()
+                    .accessibilityHidden(true)
+                Stepper(L10n.text("Number of images"), value: $store.imageCount, in: CreationSettings.imageCountRange)
+                    .labelsHidden()
+                    .accessibilityLabel(L10n.text("Number of images"))
+                    .accessibilityValue(String(store.imageCount))
+            }
+            .padding(.top, 3)
+            .help(L10n.text("Each image is generated one after another with its own seed"))
         }
     }
 

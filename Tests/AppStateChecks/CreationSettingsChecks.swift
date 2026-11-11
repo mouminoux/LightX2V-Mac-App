@@ -84,6 +84,14 @@ func creationSettingsChecks() async throws {
     let restoredDraft = AppStore()
     try check(restoredDraft.selectedID == nil && restoredDraft.currentCreationID == draftID && restoredDraft.generationSize.resolution == .fiveTwelve && restoredDraft.generationSize.aspectRatio == .square && !restoredDraft.settings.promptEnhancement.enabled,
               "an ungenerated draft's parameters survive relaunch")
+    try check(store.imageCount == 1, "new creation defaults to one image")
+    store.imageCount = 4
+    saved = try JSONFile.read(WorkspaceData.self, from: layout.state)
+    try check(AppStore().imageCount == 4 && saved.creationSettings[draftID.uuidString]?.parameters.imageCount == 4,
+              "image count is saved per creation and survives relaunch")
+    let legacy = #"{"modelName":"Qwen-Image-2.1-Turbo","parameters":{"resolution":1024,"aspectRatio":"adaptive"},"promptEnhancement":{"enabled":true},"updatedAt":"2026-01-01T00:00:00Z"}"#
+    try check(try JSONDecoder().decode(CreationSettings.self, from: Data(legacy.utf8)).parameters.imageCount == 1,
+              "creation settings saved before the image count default to one image")
     store.selectedID = first.id
     store.removeFromHistory(first)
     saved = try JSONFile.read(WorkspaceData.self, from: layout.state)

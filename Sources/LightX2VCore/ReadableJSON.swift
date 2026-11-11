@@ -16,7 +16,7 @@ enum ReadableJSON {
         } else if object["updatedAt"] != nil {
             fields = ["modelName", "parameters", "promptEnhancement", "updatedAt"]
         } else if object["aspectRatio"] != nil {
-            fields = ["resolution", "aspectRatio", "width", "height", "steps", "seed"]
+            fields = ["resolution", "aspectRatio", "imageCount", "width", "height", "steps", "seed"]
         } else if object["startedAt"] != nil {
             fields = ["directory", "sourceDirectory", "python", "requestFile", "logFile", "startedAt", "inferenceStartedAt", "finishedAt", "durationSeconds", "inferenceDurationSeconds", "error"]
         } else if object["seed"] != nil && object["steps"] != nil {

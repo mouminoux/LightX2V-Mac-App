@@ -118,6 +118,7 @@
 "Downloading llama.cpp · %.1f MB" = "正在下载 llama.cpp · %.1f MB";
 "Downloading source · %.1f MB" = "正在下载源码 · %.1f MB";
 "Drag a local image file here." = "请拖入本机中的图片文件。";
+"Each image is generated one after another with its own seed" = "逐张依次生成，每张使用独立的随机种子";
 "Encoding prompt" = "正在编码提示词";
 "Enhanced" = "已增强";
 "Enhanced prompt is empty or too long" = "增强后的提示词为空或过长";
@@ -163,6 +164,7 @@
 "HF download failed. Retry or download manually using the guide.\n" = "HF 下载失败，可重试或按下载指南自行下载。\n";
 "I2I model" = "I2I 模型";
 "I2I system prompt" = "I2I 系统提示词";
+"Image %@ of %@" = "第 %@ 张，共 %@ 张";
 "Image %@: %@" = "图片 %@：%@";
 "Image generation" = "图像生成";
 "Image generation model" = "图像生成模型";
@@ -228,6 +230,7 @@
 "Not configured" = "未配置";
 "Not installed" = "未安装";
 "Not selected" = "未选择";
+"Number of images" = "图像数量";
 "OK" = "好";
 "Open Hugging Face" = "打开 Hugging Face";
 "Open LightX2V GitHub" = "打开LightX2V GitHub";

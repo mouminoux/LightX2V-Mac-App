@@ -118,6 +118,7 @@
 "Downloading llama.cpp · %.1f MB" = "llama.cpp 다운로드 중 · %.1f MB";
 "Downloading source · %.1f MB" = "소스 다운로드 중 · %.1f MB";
 "Drag a local image file here." = "로컬 이미지 파일을 끌어오세요.";
+"Each image is generated one after another with its own seed" = "이미지는 각각 고유한 시드로 하나씩 차례로 생성됩니다";
 "Encoding prompt" = "프롬프트 인코딩 중";
 "Enhanced" = "강화됨";
 "Enhanced prompt is empty or too long" = "강화 프롬프트가 비었거나 너무 깁니다";
@@ -163,6 +164,7 @@
 "HF download failed. Retry or download manually using the guide.\n" = "HF 다운로드 실패. 다시 시도하거나 수동 다운로드하세요.\n";
 "I2I model" = "I2I 모델";
 "I2I system prompt" = "I2I 시스템 프롬프트";
+"Image %@ of %@" = "%@ / %@번째 이미지";
 "Image %@: %@" = "이미지 %@: %@";
 "Image generation" = "이미지 생성";
 "Image generation model" = "이미지 생성 모델";
@@ -228,6 +230,7 @@
 "Not configured" = "설정 전";
 "Not installed" = "미설치";
 "Not selected" = "미선택";
+"Number of images" = "이미지 수";
 "OK" = "확인";
 "Open Hugging Face" = "Hugging Face 열기";
 "Open LightX2V GitHub" = "LightX2V GitHub 열기";

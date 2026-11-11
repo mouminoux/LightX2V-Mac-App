@@ -50,6 +50,11 @@ struct AppStateChecks {
             try await environmentPresentationChecks()
             return
         }
+        if CommandLine.arguments.dropFirst().first == "--creation-only" {
+            try await creationChecks()
+            try await creationSettingsChecks()
+            return
+        }
         if CommandLine.arguments.dropFirst().first == "--enhancement-only" {
             try await creationSettingsChecks()
             try await languageTaskChecks()
