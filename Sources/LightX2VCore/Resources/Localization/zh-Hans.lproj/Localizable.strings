@@ -403,3 +403,12 @@
 "Use your own Python environment" = "使用你自己的 Python 环境";
 
 "Wait for environment search to finish" = "请等待环境搜索完成";
+"MCP server" = "MCP 服务器";
+"Port" = "端口";
+"Port must be between 1024 and 65535." = "端口必须介于 1024 和 65535 之间。";
+"MCP server port" = "MCP 服务器端口";
+"Enable MCP server" = "启用 MCP 服务器";
+"Off · Local only, no authentication, one image per call" = "已关闭 · 仅限本机、无身份验证、每次调用生成一张图片";
+"Starting…" = "正在启动…";
+"Listening at %@" = "正在监听 %@";
+"Unable to start on port %@: %@" = "无法在端口 %@ 上启动：%@";

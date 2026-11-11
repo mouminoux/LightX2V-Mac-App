@@ -97,6 +97,8 @@ final class AppStore: ObservableObject {
     private var promptStreams: [UUID: EnhancementTextStream] = [:]
     private var enhancementResourceTask: Task<Void, Never>?
     @Published private var enhancementAvailability: [PromptEnhancementMode: Bool] = [:]
+    private var externalWaiters: [UUID: CheckedContinuation<Generation?, Never>] = [:]
+    private var externalStepObservers: [UUID: (Int, Int) -> Void] = [:]
 
     var enhancementMode: PromptEnhancementMode {
         if isRunning, let job = generations.first(where: { $0.id == activeID }), let reply = job.enhancement { return reply.mode }
@@ -640,61 +642,120 @@ final class AppStore: ObservableObject {
         guard selectedModel != nil else { errorMessage = L10n.english("Choose a model first."); return }
         guard !needsGeneralSetup else { showSettings = true; return }
         guard environmentReady else { showSettings = true; return }
+        if settings.promptEnhancement.enabled && (try? settings.promptEnhancement.validate(for: enhancementMode)) == nil {
+            showModelPreparation()
+            errorMessage = L10n.english("Configure complete enhancement model directories in model preparation, or turn off prompt enhancement.")
+            return
+        }
+        let count = min(max(imageCount, CreationSettings.imageCountRange.lowerBound), CreationSettings.imageCountRange.upperBound)
+        let seeds = (0..<count).map { _ in Int64.random(in: 0...4294967295) }
         do {
-            try settings.validatePaths()
-            try ModelResource.turbo.validate(directory: settings.model)
-            if settings.promptEnhancement.enabled && (try? settings.promptEnhancement.validate(for: enhancementMode)) == nil {
-                showModelPreparation()
-                errorMessage = L10n.english("Configure complete enhancement model directories in model preparation, or turn off prompt enhancement.")
-                return
-            }
-            let count = min(max(imageCount, CreationSettings.imageCountRange.lowerBound), CreationSettings.imageCountRange.upperBound)
-            let seeds = (0..<count).map { _ in Int64.random(in: 0...4294967295) }
-            let id = UUID()
-            let formatter = DateFormatter(); formatter.dateFormat = "yyyyMMdd-HHmmss"
-            let directory = URL(fileURLWithPath: settings.outputDirectory)
-                .appendingPathComponent(formatter.string(from: Date()) + "-" + id.uuidString.prefix(8))
-            // One request, one task directory; a multi-image request numbers its outputs.
-            let outputs = seeds.enumerated().map { index, seed in
-                OutputImage(seed: seed, output: directory.appendingPathComponent(count == 1 ? "image.png" : "image-\(index + 1).png").path)
-            }
-            var runSettings = settings
-            if runSettings.promptEnhancement.enabled { runSettings.promptEnhancement = try runSettings.promptEnhancement.resolvedResources(for: enhancementMode) }
-            var request = try InferenceRequest(settings: runSettings, prompt: prompt, width: width, height: height,
-                                               seed: outputs[0].seed, output: outputs[0].output,
-                                               inputImages: inputImages, resolution: generationSize.automaticResolution,
-                                               additionalOutputs: Array(outputs.dropFirst()))
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            request.config = try QwenImage21Turbo.writeConfig(in: directory)
-            request.inputImages = try InputImages.snapshot(inputImages, in: directory)
-            let requestURL = directory.appendingPathComponent("request.json")
-            var generation = Generation(id: id, creationID: selected?.creationID ?? draftCreationID, request: request)
-            generation.python = settings.python
-            try JSONFile.write(GenerationRequestDocument(generation), to: requestURL)
-            try JSONFile.write(generation, to: directory.appendingPathComponent("generation.json"))
-            let logFile = try GenerationLog(directory: directory) { [weak self] message in self?.errorMessage = message }
-            generations.insert(generation, at: 0)
-            activeLogFile = logFile; activeLog = ""; activeID = id; selectedID = id
-            imageProgress = count > 1 ? (1, count) : nil
-            startedAt = Date(); phase = generation.enhancement == nil ? L10n.english("Starting inference") : L10n.english("Starting prompt enhancement"); currentStep = 0
-            appendLog(L10n.english("Task: %@\nStarted: %@\n%@\n", [String(describing: id.uuidString), String(describing: generation.createdAt.ISO8601Format()), String(describing: phase)]))
-            isRunning = true; isStopping = false; receivedDone = false
-            persist()
-            let process = ProcessRunner(); runner = process
-            do {
-                try process.start(python: settings.python, bridge: bridgePath, mode: "run", request: requestURL.path, workspace: settings.workingDirectory,
-                                  onEvent: { [weak self] event in self?.receive(event, for: id) },
-                                  onExit: { [weak self] code in self?.exited(code, for: id) })
-                // Clear only after launch succeeds; the submitted prompt remains in history.
-                prompt = ""
-                clearInputImages()
-            } catch {
-                markFinished(id, status: .failed, message: error.localizedDescription)
-                activeLogFile?.close(); activeLogFile = nil
-                isRunning = false; runner = nil; activeID = nil; imageProgress = nil
-                throw error
-            }
+            _ = try launchGeneration(prompt: prompt, size: generationSize, seeds: seeds, inputImages: inputImages,
+                                     enhancement: settings.promptEnhancement.enabled, creationID: selected?.creationID ?? draftCreationID,
+                                     selectsGeneration: true)
+            // Clear only after launch succeeds; the submitted prompt remains in history.
+            prompt = ""
+            clearInputImages()
         } catch { errorMessage = error.localizedDescription }
+    }
+
+    /// Writes the task directory and starts the bridge. The caller validates readiness.
+    private func launchGeneration(prompt: String, size: GenerationSize, seeds: [Int64], inputImages: [InputImage],
+                                  enhancement: Bool, creationID: UUID, selectsGeneration: Bool, source: String? = nil) throws -> UUID {
+        try settings.validatePaths()
+        try ModelResource.turbo.validate(directory: settings.model)
+        let count = seeds.count
+        let id = UUID()
+        let formatter = DateFormatter(); formatter.dateFormat = "yyyyMMdd-HHmmss"
+        let directory = URL(fileURLWithPath: settings.outputDirectory)
+            .appendingPathComponent(formatter.string(from: Date()) + "-" + id.uuidString.prefix(8))
+        // One request, one task directory; a multi-image request numbers its outputs.
+        let outputs = seeds.enumerated().map { index, seed in
+            OutputImage(seed: seed, output: directory.appendingPathComponent(count == 1 ? "image.png" : "image-\(index + 1).png").path)
+        }
+        var runSettings = settings
+        runSettings.promptEnhancement.enabled = enhancement
+        if enhancement { runSettings.promptEnhancement = try runSettings.promptEnhancement.resolvedResources(for: inputImages.isEmpty ? .t2i : .i2i) }
+        var request = try InferenceRequest(settings: runSettings, prompt: prompt, width: size.dimensions?.width, height: size.dimensions?.height,
+                                           seed: outputs[0].seed, output: outputs[0].output,
+                                           inputImages: inputImages, resolution: size.automaticResolution,
+                                           additionalOutputs: Array(outputs.dropFirst()))
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        request.config = try QwenImage21Turbo.writeConfig(in: directory)
+        request.inputImages = try InputImages.snapshot(inputImages, in: directory)
+        let requestURL = directory.appendingPathComponent("request.json")
+        var generation = Generation(id: id, creationID: creationID, request: request)
+        generation.python = settings.python
+        try JSONFile.write(GenerationRequestDocument(generation), to: requestURL)
+        try JSONFile.write(generation, to: directory.appendingPathComponent("generation.json"))
+        let logFile = try GenerationLog(directory: directory) { [weak self] message in self?.errorMessage = message }
+        generations.insert(generation, at: 0)
+        activeLogFile = logFile; activeLog = ""; activeID = id
+        if selectsGeneration { selectedID = id }
+        imageProgress = count > 1 ? (1, count) : nil
+        startedAt = Date(); phase = generation.enhancement == nil ? L10n.english("Starting inference") : L10n.english("Starting prompt enhancement"); currentStep = 0
+        appendLog(L10n.english("Task: %@\nStarted: %@\n%@\n", [String(describing: id.uuidString), String(describing: generation.createdAt.ISO8601Format()), String(describing: phase)]))
+        if let source { appendLog("Source: \(source)\n") }
+        isRunning = true; isStopping = false; receivedDone = false
+        persist()
+        let process = ProcessRunner(); runner = process
+        do {
+            try process.start(python: settings.python, bridge: bridgePath, mode: "run", request: requestURL.path, workspace: settings.workingDirectory,
+                              onEvent: { [weak self] event in self?.receive(event, for: id) },
+                              onExit: { [weak self] code in self?.exited(code, for: id) })
+        } catch {
+            markFinished(id, status: .failed, message: error.localizedDescription)
+            activeLogFile?.close(); activeLogFile = nil
+            isRunning = false; runner = nil; activeID = nil; imageProgress = nil
+            throw error
+        }
+        return id
+    }
+
+    /// Readiness for requests that do not come from the composer, such as MCP tool calls.
+    func externalGenerationBlocker(enhancement: Bool, imageToImage: Bool) -> String? {
+        if needsGeneralSetup { return "Complete the general settings in LightX2V APP first." }
+        if !environmentReady { return "The PyTorch environment is not ready. Check it in LightX2V APP settings." }
+        if !readyModelResources.contains(.turbo) { return "The Qwen-Image-2.1-Turbo model is not ready. Prepare it in LightX2V APP." }
+        if enhancement && (try? settings.promptEnhancement.validate(for: imageToImage ? .i2i : .t2i)) == nil {
+            return "Prompt enhancement models are not ready. Prepare them in LightX2V APP or set prompt_enhancement to false."
+        }
+        if busy || terminationCompletion != nil { return "LightX2V APP is busy with another task. Try again when it finishes." }
+        return nil
+    }
+
+    /// Generates exactly one image for an MCP client without touching the composer's prompt,
+    /// reference images or current creation.
+    func generateForMCP(_ arguments: MCPImageArguments, onStep: @escaping (Int, Int) -> Void) async throws -> Generation {
+        let imageToImage = !arguments.inputImages.isEmpty
+        if let blocker = externalGenerationBlocker(enhancement: arguments.promptEnhancement, imageToImage: imageToImage) { throw AppError.message(blocker) }
+        let staging = WorkspaceLayout(settings.workingDirectory).temporary.appendingPathComponent("mcp-input-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: staging) }
+        var images: [InputImage] = []
+        if imageToImage {
+            let urls = arguments.inputImages.map { URL(fileURLWithPath: $0) }
+            images = try await Task.detached(priority: .userInitiated) {
+                try InputImages.importing(urls, into: staging, existing: [], deduplicate: false)
+            }.value
+            if let blocker = externalGenerationBlocker(enhancement: arguments.promptEnhancement, imageToImage: true) { throw AppError.message(blocker) }
+        }
+        let creationID = UUID()
+        creationSettings[creationID.uuidString] = CreationSettings(modelName: QwenImage21Turbo.title, size: arguments.size,
+                                                                   enhancementEnabled: arguments.promptEnhancement, imageCount: 1)
+        let id: UUID
+        do {
+            id = try launchGeneration(prompt: arguments.prompt, size: arguments.size, seeds: [arguments.seed ?? Int64.random(in: 0...4294967295)],
+                                      inputImages: images, enhancement: arguments.promptEnhancement, creationID: creationID,
+                                      selectsGeneration: false, source: "MCP")
+        } catch {
+            if !generations.contains(where: { $0.creationID == creationID }) { creationSettings.removeValue(forKey: creationID.uuidString) }
+            throw error
+        }
+        externalStepObservers[id] = onStep
+        guard let job = await withCheckedContinuation({ continuation in externalWaiters[id] = continuation }) else {
+            throw AppError.message("The generation record is no longer available.")
+        }
+        return job
     }
 
     private func receive(_ event: [String: Any], for id: UUID) {
@@ -757,6 +818,7 @@ final class AppStore: ObservableObject {
             currentStep = event["step"] as? Int ?? 0
             let totalSteps = event["total"] as? Int ?? QwenImage21Turbo.inferenceSteps
             if !isStopping { phase = L10n.english("Generating · Step %@ / %@", [String(describing: currentStep), String(describing: totalSteps)]) }
+            externalStepObservers[id]?(currentStep, totalSteps)
         case "error":
             appendLog("\n" + (event["message"] as? String ?? L10n.english("Unknown error")) + "\n")
         case "done":
@@ -820,6 +882,8 @@ final class AppStore: ObservableObject {
         }
         activeLogFile?.close(); activeLogFile = nil
         isRunning = false; isStopping = false; runner = nil; activeID = nil; imageProgress = nil
+        externalStepObservers.removeValue(forKey: id)
+        externalWaiters.removeValue(forKey: id)?.resume(returning: generations.first { $0.id == id })
         finishTerminationIfNeeded()
     }
 

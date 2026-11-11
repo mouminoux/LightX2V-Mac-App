@@ -403,3 +403,12 @@
 "Use your own Python environment" = "Eigene Python-Umgebung verwenden";
 
 "Wait for environment search to finish" = "Warten Sie, bis die Umgebungssuche abgeschlossen ist";
+"MCP server" = "MCP-Server";
+"Port" = "Port";
+"Port must be between 1024 and 65535." = "Der Port muss zwischen 1024 und 65535 liegen.";
+"MCP server port" = "MCP-Server-Port";
+"Enable MCP server" = "MCP-Server aktivieren";
+"Off · Local only, no authentication, one image per call" = "Aus · Nur lokal, ohne Authentifizierung, ein Bild pro Aufruf";
+"Starting…" = "Wird gestartet…";
+"Listening at %@" = "Empfängt unter %@";
+"Unable to start on port %@: %@" = "Start auf Port %@ nicht möglich: %@";

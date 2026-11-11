@@ -36,7 +36,8 @@ func generalSettingsLayoutChecks() async throws {
     }
     func geometry(_ host: NSView) throws -> [String: NSRect] {
         host.layoutSubtreeIfNeeded()
-        let inputs = fields(host).filter(\.isEditable).sorted { $0.convert($0.bounds, to: host).minY < $1.convert($1.bounds, to: host).minY }
+        // The MCP port field is not a setup path.
+        let inputs = fields(host).filter { $0.isEditable && $0.placeholderString != L10n.text("Port") }.sorted { $0.convert($0.bounds, to: host).minY < $1.convert($1.bounds, to: host).minY }
         guard inputs.count == 2 else { throw AppError.message("Both setting paths must exist without scrolling") }
         var frames: [String: NSRect] = [:]
         for (index, input) in inputs.enumerated() {

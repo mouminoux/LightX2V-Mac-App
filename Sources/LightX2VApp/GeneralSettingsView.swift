@@ -38,6 +38,7 @@ struct SettingsView: View {
             header
             VStack(spacing: 8) {
                 languageCard
+                MCPSettingsCard()
                 workspaceCard
                 pythonCard
             }.padding(.horizontal, 24).padding(.bottom, 12)
@@ -446,5 +447,70 @@ private struct SettingsStepBadge: View {
             .foregroundStyle(active ? Palette.onButton : Palette.muted)
             .frame(width: 22, height: 22)
             .background(active ? Palette.ink : Palette.selection, in: Circle())
+    }
+}
+
+/// Applies immediately, like the language: MCP preferences do not belong to a workspace.
+private struct MCPSettingsCard: View {
+    @ObservedObject private var language = LanguagePreferences.shared
+    @ObservedObject private var mcp = MCPController.shared
+    @State private var portText = String(MCPController.shared.port)
+
+    private var portValid: Bool { MCPPort.parse(portText) != nil }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "point.3.connected.trianglepath.dotted").font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Palette.muted).frame(width: 22, height: 22)
+            VStack(alignment: .leading, spacing: 2) {
+                SettingsCardTitle(title: L10n.text("MCP server"))
+                Text(statusText).font(.system(size: 10)).foregroundStyle(statusColor)
+                    .lineLimit(1).truncationMode(.middle).textSelection(.enabled).help(statusText)
+            }
+            Spacer(minLength: 8)
+            Text(L10n.text("Port")).font(.system(size: 11)).foregroundStyle(Palette.muted)
+            TextField(L10n.text("Port"), text: $portText)
+                .font(.system(size: 11, design: .monospaced)).textFieldStyle(.plain)
+                .multilineTextAlignment(.trailing)
+                .padding(.horizontal, 8).frame(width: 68, height: 26)
+                .background(Palette.surface, in: RoundedRectangle(cornerRadius: 6))
+                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(portValid ? Palette.line : Palette.accent, lineWidth: 1).allowsHitTesting(false))
+                .help(L10n.text("Port must be between 1024 and 65535."))
+                .accessibilityLabel(L10n.text("MCP server port"))
+                .onSubmit(applyPort)
+                .dismissEditingOnOutsideClick()
+            Toggle(L10n.text("Enable MCP server"), isOn: $mcp.enabled)
+                .toggleStyle(.switch).controlSize(.small).labelsHidden()
+                .accessibilityLabel(L10n.text("Enable MCP server"))
+        }.padding(.horizontal, 12).frame(height: 48)
+            .background(Palette.surface, in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Palette.line, lineWidth: 1))
+            // Typing pauses apply the port so the listener never binds intermediate values.
+            .task(id: portText) {
+                try? await Task.sleep(for: .milliseconds(700))
+                guard !Task.isCancelled else { return }
+                applyPort()
+            }
+    }
+
+    private func applyPort() { if let port = MCPPort.parse(portText) { mcp.setPort(port) } }
+
+    private var statusText: String {
+        if !portValid { return L10n.text("Port must be between 1024 and 65535.") }
+        switch mcp.status {
+        case .off: return L10n.text("Off · Local only, no authentication, one image per call")
+        case .starting: return L10n.text("Starting…")
+        case .listening: return L10n.text("Listening at %@", [mcp.endpoint])
+        case .failed(let message): return L10n.text("Unable to start on port %@: %@", [String(mcp.port), message])
+        }
+    }
+
+    private var statusColor: Color {
+        if !portValid { return Palette.accent }
+        switch mcp.status {
+        case .listening: return Palette.green
+        case .failed: return Palette.accent
+        default: return Palette.muted
+        }
     }
 }

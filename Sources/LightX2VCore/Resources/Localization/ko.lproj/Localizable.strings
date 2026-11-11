@@ -403,3 +403,12 @@
 "Use your own Python environment" = "기존 Python 환경 사용";
 
 "Wait for environment search to finish" = "환경 검색이 끝날 때까지 기다려 주세요";
+"MCP server" = "MCP 서버";
+"Port" = "포트";
+"Port must be between 1024 and 65535." = "포트는 1024~65535 사이여야 합니다.";
+"MCP server port" = "MCP 서버 포트";
+"Enable MCP server" = "MCP 서버 사용";
+"Off · Local only, no authentication, one image per call" = "꺼짐 · 로컬 전용, 인증 없음, 호출당 이미지 1장";
+"Starting…" = "시작 중…";
+"Listening at %@" = "%@에서 수신 중";
+"Unable to start on port %@: %@" = "포트 %@에서 시작할 수 없음: %@";

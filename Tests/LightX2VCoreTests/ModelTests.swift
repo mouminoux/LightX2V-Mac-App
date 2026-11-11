@@ -34,6 +34,7 @@ struct CoreChecks {
         try modelSettingsChecks()
         try enhancementChecks()
         try turboModelChecks()
+        try mcpArgumentChecks()
         print("Core checks passed")
     }
     static func invalidRequests() throws {
@@ -249,4 +250,30 @@ struct CoreChecks {
             try expect(rejected, "ambiguous or missing size accepted")
         }
     }
+}
+
+func mcpArgumentChecks() throws {
+    let defaults = try MCPImageArguments.parse(["prompt": "猫"])
+    try expect(defaults.prompt == "猫" && defaults.size.automaticResolution == 1024 && defaults.seed == nil
+               && !defaults.promptEnhancement && defaults.inputImages.isEmpty, "MCP defaults to adaptive 1K, random seed, no enhancement")
+    let full = try MCPImageArguments.parse(["prompt": "Boat", "aspect_ratio": "9:16", "resolution": "2K", "seed": NSNumber(value: 4294967295),
+                                            "prompt_enhancement": NSNumber(value: true), "input_images": ["/tmp/a.png"]])
+    try expect(full.size.dimensions == ImageDimensions(width: 1536, height: 2752) && full.seed == 4294967295
+               && full.promptEnhancement && full.inputImages == ["/tmp/a.png"], "MCP arguments map to a preset size")
+    let invalid: [[String: Any]] = [
+        [:], ["prompt": "  "], ["prompt": String(repeating: "a", count: 20001)], ["prompt": "x", "count": 2],
+        ["prompt": "x", "num_images": 1], ["prompt": "x", "aspect_ratio": "2:1"], ["prompt": "x", "resolution": "4K"],
+        ["prompt": "x", "seed": NSNumber(value: -1)], ["prompt": "x", "seed": NSNumber(value: 4294967296.0)],
+        ["prompt": "x", "seed": NSNumber(value: 1.5)], ["prompt": "x", "seed": NSNumber(value: true)], ["prompt": "x", "seed": "1"],
+        ["prompt": "x", "prompt_enhancement": NSNumber(value: 1)], ["prompt": "x", "input_images": ["relative.png"]],
+        ["prompt": "x", "input_images": Array(repeating: "/a.png", count: 9)]
+    ]
+    for arguments in invalid {
+        var rejected = false
+        do { _ = try MCPImageArguments.parse(arguments) } catch { rejected = true }
+        try expect(rejected, "invalid MCP arguments accepted: \(arguments)")
+    }
+    try expect(MCPPort.parse("7788") == 7788 && MCPPort.parse("1023") == nil && MCPPort.parse("65536") == nil && MCPPort.parse("abc") == nil,
+               "MCP port validation")
+    print("PASS MCP tool arguments: one image per call, preset sizes, seed and port validation")
 }

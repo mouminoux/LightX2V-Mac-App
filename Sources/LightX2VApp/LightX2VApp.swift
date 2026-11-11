@@ -18,7 +18,7 @@ struct LightX2VApplication: App {
                 .environment(\.layoutDirection, language.direction)
                 .preferredColorScheme(.light)
                 .background(ScreenFittingWindow())
-                .onAppear { delegate.store = store; NSApp.setActivationPolicy(.regular); NSApp.activate(ignoringOtherApps: true); store.start() }
+                .onAppear { delegate.store = store; MCPController.shared.attach(store); NSApp.setActivationPolicy(.regular); NSApp.activate(ignoringOtherApps: true); store.start() }
         }
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentMinSize)
@@ -45,6 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     weak var store: AppStore?
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        MCPController.shared.stop()
         guard let store, store.busy else { store?.persist(); store?.clearInputImages(); return .terminateNow }
         if store.isRunning {
             let alert = NSAlert()

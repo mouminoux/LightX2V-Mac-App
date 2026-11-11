@@ -403,3 +403,12 @@
 "Use your own Python environment" = "既存の Python 環境を使用";
 
 "Wait for environment search to finish" = "環境の検索が完了するまでお待ちください";
+"MCP server" = "MCP サーバー";
+"Port" = "ポート";
+"Port must be between 1024 and 65535." = "ポートは 1024〜65535 の範囲で指定してください。";
+"MCP server port" = "MCP サーバーのポート";
+"Enable MCP server" = "MCP サーバーを有効にする";
+"Off · Local only, no authentication, one image per call" = "オフ · ローカルのみ、認証なし、1 回の呼び出しで 1 枚";
+"Starting…" = "起動中…";
+"Listening at %@" = "%@ で待機中";
+"Unable to start on port %@: %@" = "ポート %@ で起動できません：%@";

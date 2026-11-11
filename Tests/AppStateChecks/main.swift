@@ -70,6 +70,10 @@ struct AppStateChecks {
             try await modelSelectionLayoutChecks()
             return
         }
+        if CommandLine.arguments.dropFirst().first == "--mcp-only" {
+            try await mcpChecks()
+            return
+        }
         if CommandLine.arguments.dropFirst().first == "--logs-only" {
             try await generationLogChecks()
             return
@@ -224,6 +228,7 @@ struct AppStateChecks {
         try await environmentPresentationChecks()
         try await modelSelectionLayoutChecks()
         try await conversationLayoutChecks()
+        try await mcpChecks()
         print("App state checks passed")
     }
 }
