@@ -426,6 +426,7 @@ struct GenerationTurnView: View {
     @State private var image: NSImage?
     @State private var loadingImage = true
     @State private var loadedImagePath: String?
+    @State private var gallery: [String: NSImage] = [:]
     var body: some View {
         // Keep the header and actions attached to the actual image width.
         let replyWidth = image.map { min(maximumWidth, max(220, previewHeight * $0.size.width / max(1, $0.size.height))) } ?? maximumWidth
@@ -437,7 +438,9 @@ struct GenerationTurnView: View {
                                              promptStream: store.promptStream(for: job))
                     .frame(maxWidth: maximumWidth)
             }
-            if job.enhancement == nil || job.enhancement?.status == .completed {
+            if job.request.outputs.count > 1 && (job.enhancement == nil || job.enhancement?.status == .completed) {
+                multiImageReply.frame(maxWidth: maximumWidth, alignment: .leading)
+            } else if job.enhancement == nil || job.enhancement?.status == .completed {
             VStack(alignment: .leading, spacing: 12) {
                 replyHeader
                 if job.status == .completed {
@@ -462,10 +465,6 @@ struct GenerationTurnView: View {
                     VStack(spacing: 17) {
                         ProgressView().controlSize(.regular).tint(Palette.ink)
                         Text(L10n.render(store.phase)).font(.system(size: 13, weight: .medium))
-                        if job.id == store.activeID, let batch = store.batchProgress {
-                            Text(L10n.text("Image %@ of %@", [String(batch.index), String(batch.total)]))
-                                .font(.system(size: 11)).monospacedDigit().foregroundStyle(Palette.muted)
-                        }
                         HStack(spacing: 5) {
                             ForEach(1...QwenImage21Turbo.inferenceSteps, id: \.self) { index in
                                 Capsule().fill(index < store.currentStep ? Palette.ink : index == store.currentStep ? Palette.ink.opacity(0.45) : Palette.line)
@@ -483,8 +482,16 @@ struct GenerationTurnView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .task(id: job.finishedOutputs) {
+            // Multi-image replies load every finished output as it arrives.
+            guard job.request.outputs.count > 1 else { return }
+            for path in job.finishedOutputs where gallery[path] == nil {
+                guard let loaded = await LocalImagePreview.load(path, maximumDimension: 1200), !Task.isCancelled else { continue }
+                gallery[path] = loaded
+            }
+        }
         .task(id: job.status == .completed ? job.request.output : nil) {
-            guard job.status == .completed else { return }
+            guard job.status == .completed, job.request.outputs.count == 1 else { return }
             // Keep the completed preview across task restarts.
             guard loadedImagePath != job.request.output else { return }
             loadingImage = true
@@ -507,6 +514,15 @@ struct GenerationTurnView: View {
                 HStack(spacing: 6) {
                     if job.status == .completed {
                         Label(L10n.text("Generated"), systemImage: "checkmark.circle.fill").foregroundStyle(Palette.green)
+                        Text("·").foregroundStyle(Palette.muted)
+                    }
+                    if job.status == .running, job.request.outputs.count > 1, job.id == store.activeID {
+                        Text(L10n.text("Image %@ of %@", [String(currentImage + 1), String(job.request.outputs.count)]))
+                            .monospacedDigit()
+                        Text("·").foregroundStyle(Palette.muted)
+                    } else if job.request.outputs.count > 1 {
+                        Text(L10n.text("%@ of %@ images", [String(job.finishedOutputs.count), String(job.request.outputs.count)]))
+                            .monospacedDigit()
                         Text("·").foregroundStyle(Palette.muted)
                     }
                     if job.status == .running {
@@ -555,6 +571,102 @@ struct GenerationTurnView: View {
         }.disabled(!store.canReferenceImages)
             .help(store.selectedModel == nil ? L10n.text("Choose a model first") : L10n.text("Add this image as a reference to the current prompt"))
             .accessibilityLabel(L10n.text("Reference"))
+    }
+
+    /// One request, many outputs: a single reply holding a grid of images.
+    private var multiImageReply: some View {
+        let spacing: CGFloat = 10
+        let cellWidth = max(1, (maximumWidth - spacing) / 2)
+        let ratio = gallery.values.first.map { $0.size.height / max(1, $0.size.width) }
+            ?? job.request.width.flatMap { width in job.request.height.map { CGFloat($0) / CGFloat(max(1, width)) } } ?? 1
+        let cellHeight = cellWidth * ratio
+        let finished = job.finishedOutputs
+        let running = job.status == .running
+        // Pending cells are shown only while the request runs; stopped or failed requests keep finished images.
+        let shown = running ? job.request.outputs.count : finished.count
+        let current = job.id == store.activeID ? currentImage : -1
+        return VStack(alignment: .leading, spacing: 12) {
+            replyHeader
+            if shown > 0 {
+                LazyVGrid(columns: Array(repeating: GridItem(.fixed(cellWidth), spacing: spacing, alignment: .top), count: 2),
+                          alignment: .leading, spacing: 14) {
+                    ForEach(0..<shown, id: \.self) { index in
+                        let path = job.request.outputs[index].output
+                        if index < finished.count {
+                            if let image = gallery[path] {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Image(nsImage: image).resizable().scaledToFit()
+                                        .frame(width: cellWidth, height: cellWidth * image.size.height / max(1, image.size.width))
+                                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                                        .contentShape(Rectangle())
+                                        .onDrag { NSItemProvider(object: URL(fileURLWithPath: path) as NSURL) }
+                                        .contextMenu {
+                                            Button(L10n.text("Copy")) { store.copyImage(job, image: path) }
+                                            Button(L10n.text("Show in Finder")) { store.reveal(job, image: path) }
+                                            Button(L10n.text("Reference")) { store.reference(job, image: path) }.disabled(!store.canReferenceImages)
+                                            Button(L10n.text("View log")) { store.openLog(for: job) }
+                                        }
+                                        .accessibilityLabel(L10n.text("Image %@ of %@", [String(index + 1), String(job.request.outputs.count)]))
+                                    imageActions(path)
+                                }
+                            } else {
+                                placeholder(height: cellHeight) { ProgressView().controlSize(.small) }
+                            }
+                        } else if index == current {
+                            placeholder(height: cellHeight) {
+                                VStack(spacing: 10) {
+                                    ProgressView().controlSize(.small).tint(Palette.ink)
+                                    Text(L10n.render(store.phase)).font(.system(size: 11, weight: .medium))
+                                        .multilineTextAlignment(.center).lineLimit(2).padding(.horizontal, 8)
+                                    HStack(spacing: 3) {
+                                        ForEach(1...QwenImage21Turbo.inferenceSteps, id: \.self) { step in
+                                            Capsule().fill(step < store.currentStep ? Palette.ink : step == store.currentStep ? Palette.ink.opacity(0.45) : Palette.line)
+                                                .frame(width: 12, height: 3)
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            placeholder(height: cellHeight) {
+                                Image(systemName: "photo").font(.system(size: 18)).foregroundStyle(Palette.line)
+                            }.accessibilityLabel(L10n.text("Waiting"))
+                        }
+                    }
+                }
+            }
+            if running {
+                Button(L10n.text("View live log")) { store.openLog(for: job) }.buttonStyle(HoverButtonStyle()).font(.system(size: 11)).foregroundStyle(Palette.muted)
+            } else if job.status != .completed {
+                failure(job.error ?? job.status.label, symbol: job.status == .failed ? "exclamationmark.triangle" : "pause.circle")
+            }
+        }
+    }
+
+    /// Zero-based image in progress; never behind the images that already finished.
+    private var currentImage: Int {
+        min(job.request.outputs.count - 1, max((store.imageProgress?.index ?? 1) - 1, job.completedImages))
+    }
+
+    private func placeholder<Content: View>(height: CGFloat, @ViewBuilder content: () -> Content) -> some View {
+        content()
+            .frame(maxWidth: .infinity).frame(height: max(120, height))
+            .background(Palette.surfaceSubtle, in: RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Palette.line, style: StrokeStyle(lineWidth: 1, dash: [5])))
+    }
+
+    private func imageActions(_ path: String) -> some View {
+        HStack(spacing: 2) {
+            Button { store.copyImage(job, image: path) } label: { Image(systemName: "doc.on.doc").frame(width: 28, height: 28) }
+                .help(L10n.text("Copy image")).accessibilityLabel(L10n.text("Copy"))
+            Button { store.reveal(job, image: path) } label: { Image(systemName: "folder").frame(width: 28, height: 28) }
+                .help(L10n.text("Show image file in Finder")).accessibilityLabel(L10n.text("Show in Finder"))
+            Button { store.reference(job, image: path) } label: { Image(systemName: "photo.badge.plus").frame(width: 28, height: 28) }
+                .disabled(!store.canReferenceImages)
+                .help(store.selectedModel == nil ? L10n.text("Choose a model first") : L10n.text("Add this image as a reference to the current prompt"))
+                .accessibilityLabel(L10n.text("Reference"))
+        }
+        .font(.system(size: 12)).foregroundStyle(Palette.muted)
+        .buttonStyle(HoverButtonStyle(radius: 6))
     }
 
     private func failure(_ message: String, symbol: String) -> some View {

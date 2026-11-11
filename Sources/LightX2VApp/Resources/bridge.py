@@ -120,6 +120,21 @@ def arguments(request, config_path):
     return cmd
 
 
+def output_list(request):
+    """Every requested image as {seed, output}; single-image requests omit "outputs"."""
+    outputs = request.get("outputs")
+    if outputs is None:
+        return [{"seed": request.get("seed"), "output": request.get("output", "")}]
+    if not isinstance(outputs, list) or not 1 <= len(outputs) <= 8 or not all(isinstance(o, dict) and set(o) == {"seed", "output"} for o in outputs):
+        raise ValueError("Request outputs must list between 1 and 8 images with a seed and an output each")
+    if outputs[0] != {"seed": request.get("seed"), "output": request.get("output")}:
+        raise ValueError("Request outputs must start with the request seed and output")
+    paths = [o["output"] for o in outputs]
+    if not all(isinstance(p, str) for p in paths) or len(set(paths)) != len(paths) or len({Path(p).parent for p in paths}) != 1:
+        raise ValueError("Output images must be distinct files in one task directory")
+    return outputs
+
+
 def validate_image(path, expected_width=None, expected_height=None):
     # Decode as well as check metadata: a truncated PNG is not a completed run.
     from PIL import Image
@@ -204,9 +219,11 @@ def run(request, cfg):
     destination = Path(request["output"]).parent
     destination.mkdir(parents=True, exist_ok=True)
     config_path = destination / "config.json"
+    images = output_list(request)
     # Validate original inputs before launching either model or modifying output.
-    arguments(request, config_path)
-    if Path(request["output"]).exists():
+    for item in images:
+        arguments(dict(request, **item), config_path)
+    if any(Path(item["output"]).exists() for item in images):
         raise ValueError("Output file already exists; create a new generation task")
     started = time.monotonic()
     inference_started = None
@@ -216,36 +233,48 @@ def run(request, cfg):
             from prompt_enhancement import run_enhancement
             request = run_enhancement(request, destination, emit, supervisor)
         supervisor.check_cancelled()
-        cmd = arguments(request, config_path)
+        # One enhanced prompt and size serve every image; only the seed and output differ.
+        commands = [arguments(dict(request, **item), config_path) for item in images]
         config_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
-        (destination / "invocation.json").write_text(json.dumps({"argv": cmd, "cwd": str(destination)}, ensure_ascii=False, indent=2), encoding="utf-8")
+        invocations = [{"argv": cmd, "cwd": str(destination)} for cmd in commands]
+        (destination / "invocation.json").write_text(json.dumps(invocations[0] if len(invocations) == 1 else invocations, ensure_ascii=False, indent=2), encoding="utf-8")
         inference_started = time.monotonic()
         emit("inference_started", startedAt=time.time())
-        emit("status", message="Loading model", phase="loading")
-        tail = []
+        total = len(images)
+        width = height = None
         with (destination / "inference.log").open("w", encoding="utf-8") as log:
-            child = supervisor.spawn(cmd, cwd=str(destination), env=environment(request), stdout=subprocess.PIPE,
-                                     stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", bufsize=1)
-            for raw in child.stdout:
-                line = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", raw).rstrip("\r\n")
-                log.write(line + "\n")
-                log.flush()
-                tail = (tail + [line])[-30:]
-                emit("log", message=line)
-                step = re.search(r"step_index:\s*(\d+)\s*/\s*(\d+)", line)
-                if step:
-                    emit("step", step=int(step[1]), total=int(step[2]))
-                elif "Run VAE Decoder" in line:
-                    emit("status", message="Decoding image", phase="decoding")
-                elif "Run Encoders" in line:
-                    emit("status", message="Encoding prompt", phase="encoding")
-            code = child.wait()
-            supervisor.release(child)
-        supervisor.check_cancelled()
-        if code != 0:
-            raise RuntimeError(f"Inference process exited ({code})\n" + "\n".join(tail[-12:]))
-        width, height = validate_image(request["output"], request.get("width"), request.get("height"))
-        emit("done", status="completed", image=request["output"], width=width, height=height, duration=time.monotonic() - started,
+            for index, (item, cmd) in enumerate(zip(images, commands), start=1):
+                supervisor.check_cancelled()
+                if total > 1:
+                    emit("image_started", index=index, total=total)
+                    log.write(f"=== Image {index} of {total} · seed {item['seed']} ===\n")
+                emit("status", message="Loading model", phase="loading")
+                tail = []
+                child = supervisor.spawn(cmd, cwd=str(destination), env=environment(request), stdout=subprocess.PIPE,
+                                         stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", bufsize=1)
+                for raw in child.stdout:
+                    line = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", raw).rstrip("\r\n")
+                    log.write(line + "\n")
+                    log.flush()
+                    tail = (tail + [line])[-30:]
+                    emit("log", message=line)
+                    step = re.search(r"step_index:\s*(\d+)\s*/\s*(\d+)", line)
+                    if step:
+                        emit("step", step=int(step[1]), total=int(step[2]))
+                    elif "Run VAE Decoder" in line:
+                        emit("status", message="Decoding image", phase="decoding")
+                    elif "Run Encoders" in line:
+                        emit("status", message="Encoding prompt", phase="encoding")
+                code = child.wait()
+                supervisor.release(child)
+                supervisor.check_cancelled()
+                if code != 0:
+                    raise RuntimeError(f"Inference process exited ({code})\n" + "\n".join(tail[-12:]))
+                width, height = validate_image(item["output"], request.get("width"), request.get("height"))
+                if total > 1:
+                    emit("image_completed", index=index, image=item["output"], width=width, height=height)
+        emit("done", status="completed", image=request["output"], images=[item["output"] for item in images],
+             width=width, height=height, duration=time.monotonic() - started,
              inferenceDuration=time.monotonic() - inference_started)
         return 0
     except BaseException:

@@ -1,4 +1,5 @@
 // Interface strings. Operational logs always use English.
+"%@ of %@ images" = "이미지 %@ / %@개";
 "\nEstimated remaining " = "\n예상 남은 시간 ";
 "\nFile reconstruction " = "\n파일 재구성 ";
 "\nNetwork speed " = "\n네트워크 속도 ";

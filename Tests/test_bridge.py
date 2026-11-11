@@ -206,6 +206,36 @@ class BridgeTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         bridge.arguments(request, self.config)
 
+    def test_multiple_outputs_run_once_per_seed_in_one_request(self):
+        run = self.root / 'run'
+        outputs = [{"seed": seed, "output": str(run / f'image-{i}.png')} for i, seed in enumerate((4294967295, 7, 0), 1)]
+        self.request.update(seed=outputs[0]['seed'], output=outputs[0]['output'], outputs=outputs)
+        child = self.start(); out, err = child.communicate(timeout=30)
+        self.assertEqual(child.returncode, 0, err + out)
+        events = [json.loads(line) for line in out.splitlines()]
+        self.assertEqual([(e['index'], e['total']) for e in events if e['type'] == 'image_started'], [(1, 3), (2, 3), (3, 3)])
+        self.assertEqual([e['image'] for e in events if e['type'] == 'image_completed'], [o['output'] for o in outputs])
+        self.assertEqual(sum(e['type'] == 'inference_started' for e in events), 1)
+        self.assertEqual(events[-1]['status'], 'completed')
+        self.assertEqual(events[-1]['images'], [o['output'] for o in outputs])
+        for item in outputs:
+            self.assertEqual(bridge.validate_image(item['output'], 512, 256), (512, 256))
+        invocations = json.loads((run / 'invocation.json').read_text())
+        self.assertEqual([cmd['argv'][cmd['argv'].index('--seed') + 1] for cmd in invocations], ['4294967295', '7', '0'])
+        self.assertEqual(json.loads((run / 'received.json').read_text())['seed'], '0')
+        self.assertIn('=== Image 3 of 3 · seed 0 ===', (run / 'inference.log').read_text())
+
+    def test_invalid_output_lists_are_rejected_before_inference(self):
+        run = self.root / 'run'
+        first = {"seed": self.request['seed'], "output": self.request['output']}
+        for outputs in ([], [first, first], [{"seed": 1, "output": str(run / 'other.png')}],
+                        [first, {"seed": 2, "output": str(self.root / 'elsewhere/image.png')}],
+                        [first, {"seed": -1, "output": str(run / 'image-2.png')}],
+                        [first] + [{"seed": i, "output": str(run / f'extra-{i}.png')} for i in range(8)]):
+            with self.subTest(outputs=outputs), self.assertRaises(ValueError):
+                bridge.run(dict(self.request, outputs=outputs), self.cfg)
+        self.assertFalse((run / 'inference.log').exists())
+
     def test_existing_output_is_never_overwritten(self):
         output=Path(self.request['output']); output.parent.mkdir(); output.write_bytes(b'keep me')
         child=self.start(); out,err=child.communicate(timeout=15)

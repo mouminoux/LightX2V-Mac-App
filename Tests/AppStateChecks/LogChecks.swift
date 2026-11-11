@@ -172,6 +172,7 @@ func generationLogChecks() async throws {
     try check(reopened.logs == missing.error, "a task without log files still shows its saved failure")
 
     store.newGeneration()
+    store.setPromptEnhancementEnabled(false) // New creations enable PE; this fixture has no PE models.
     let independent = try await submit("NEW_CREATION")
     store.selectLog(first.id)
     try check(store.logGenerationID == independent.id, "the task selector cannot leak logs from another creation")

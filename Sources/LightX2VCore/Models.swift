@@ -91,6 +91,13 @@ public enum AppError: LocalizedError {
     public var errorDescription: String? { if case .message(let value) = self { return value }; return nil }
 }
 
+/// One requested output image and the seed that produces it.
+public struct OutputImage: Codable, Equatable {
+    public var seed: Int64
+    public var output: String
+    public init(seed: Int64, output: String) { self.seed = seed; self.output = output }
+}
+
 public struct InferenceRequest: Codable {
     public var repository: String
     public var model: String
@@ -99,12 +106,21 @@ public struct InferenceRequest: Codable {
     public var width: Int?
     public var height: Int?
     public var resolution: Int?
-    public var seed: Int64
-    public var output: String
+    /// Every image of the request, generated one after another; never empty.
+    public var outputs: [OutputImage]
+    public var seed: Int64 {
+        get { outputs[0].seed }
+        set { outputs[0].seed = newValue }
+    }
+    public var output: String {
+        get { outputs[0].output }
+        set { outputs[0].output = newValue }
+    }
     public var inputImages: [InputImage]
     public var promptEnhancement: PromptEnhancementSettings?
 
-    public init(settings: AppSettings, prompt: String, width: Int?, height: Int?, seed: Int64, output: String, inputImages: [InputImage] = [], resolution: Int? = nil) throws {
+    public init(settings: AppSettings, prompt: String, width: Int?, height: Int?, seed: Int64, output: String, inputImages: [InputImage] = [], resolution: Int? = nil,
+                additionalOutputs: [OutputImage] = []) throws {
         guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, prompt.count <= 20000 else {
             throw AppError.message(L10n.english("Enter a prompt between 1 and 20000 characters."))
         }
@@ -117,16 +133,17 @@ public struct InferenceRequest: Codable {
                 throw AppError.message(ImageDimensions.validationMessage)
             }
         }
-        guard (0...4294967295).contains(seed) else { throw AppError.message(L10n.english("Seed must be between 0 and 4294967295.")) }
+        let outputs = [OutputImage(seed: seed, output: output)] + additionalOutputs
+        guard outputs.allSatisfy({ (0...4294967295).contains($0.seed) }) else { throw AppError.message(L10n.english("Seed must be between 0 and 4294967295.")) }
         try InputImages.validate(inputImages)
         repository = settings.repository; model = settings.model; config = settings.config
-        self.prompt = prompt; self.width = width; self.height = height; self.seed = seed; self.output = output
+        self.prompt = prompt; self.width = width; self.height = height; self.outputs = outputs
         self.inputImages = inputImages
         self.resolution = resolution
         self.promptEnhancement = settings.promptEnhancement.enabled ? settings.promptEnhancement : nil
     }
 
-    private enum CodingKeys: String, CodingKey { case repository, model, config, prompt, width, height, resolution, seed, output, inputImages, promptEnhancement }
+    private enum CodingKeys: String, CodingKey { case repository, model, config, prompt, width, height, resolution, seed, output, outputs, inputImages, promptEnhancement }
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         repository = try values.decode(String.self, forKey: .repository)
@@ -136,10 +153,24 @@ public struct InferenceRequest: Codable {
         width = try values.decodeIfPresent(Int.self, forKey: .width)
         height = try values.decodeIfPresent(Int.self, forKey: .height)
         resolution = try values.decodeIfPresent(Int.self, forKey: .resolution)
-        seed = try values.decode(Int64.self, forKey: .seed)
-        output = try values.decode(String.self, forKey: .output)
+        let first = OutputImage(seed: try values.decode(Int64.self, forKey: .seed), output: try values.decode(String.self, forKey: .output))
+        let all = try values.decodeIfPresent([OutputImage].self, forKey: .outputs) ?? [first]
+        guard all.first == first else { throw AppError.message("Request outputs do not start with seed and output") }
+        outputs = all
         inputImages = try values.decode([InputImage].self, forKey: .inputImages)
         promptEnhancement = try values.decodeIfPresent(PromptEnhancementSettings.self, forKey: .promptEnhancement)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(repository, forKey: .repository); try values.encode(model, forKey: .model)
+        try values.encode(config, forKey: .config); try values.encode(prompt, forKey: .prompt)
+        try values.encodeIfPresent(width, forKey: .width); try values.encodeIfPresent(height, forKey: .height)
+        try values.encodeIfPresent(resolution, forKey: .resolution)
+        // seed/output keep the single-image shape; outputs lists every image of a multi-image request.
+        try values.encode(seed, forKey: .seed); try values.encode(output, forKey: .output)
+        if outputs.count > 1 { try values.encode(outputs, forKey: .outputs) }
+        try values.encode(inputImages, forKey: .inputImages)
+        try values.encodeIfPresent(promptEnhancement, forKey: .promptEnhancement)
     }
 }
 
@@ -170,8 +201,14 @@ public struct Generation: Codable, Identifiable {
     public var python: String = ""
     public var actualWidth: Int?
     public var actualHeight: Int?
+    /// Images of the request that finished, in order; partial after a stop or failure.
+    public var completedImages = 0
     public var finishedAt: Date?
     public var directory: String { URL(fileURLWithPath: request.output).deletingLastPathComponent().path }
+    /// Output paths of the images that finished, in request order.
+    public var finishedOutputs: [String] {
+        Array(request.outputs.prefix(status == .completed ? request.outputs.count : completedImages).map(\.output))
+    }
     public var title: String { String(request.prompt.replacingOccurrences(of: "\n", with: " ").prefix(52)) }
     public init(id: UUID = UUID(), creationID: UUID? = nil, request: InferenceRequest) {
         self.id = id; self.creationID = creationID ?? id

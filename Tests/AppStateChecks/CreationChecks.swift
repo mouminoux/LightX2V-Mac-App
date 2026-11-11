@@ -60,10 +60,16 @@ func creationChecks() async throws {
     import json, shutil, sys, time
     from pathlib import Path
     request = json.load(open(sys.argv[-1]))
-    if request["prompt"] == "Slow batch":
-        time.sleep(10)
     fixture = "fixture-second.png" if request["prompt"] == "Independent second scene" else "fixture.png"
-    shutil.copyfile(Path(__file__).with_name(fixture), request["output"])
+    outputs = request.get("outputs") or [{"seed": request["seed"], "output": request["output"]}]
+    for index, item in enumerate(outputs, 1):
+        if len(outputs) > 1:
+            print(json.dumps({"type":"image_started", "index":index, "total":len(outputs)}), flush=True)
+        if request["prompt"] == "Slow batch" and index == 2:
+            time.sleep(10)
+        shutil.copyfile(Path(__file__).with_name(fixture), item["output"])
+        if len(outputs) > 1:
+            print(json.dumps({"type":"image_completed", "index":index, "image":item["output"], "width":64, "height":32}), flush=True)
     print(json.dumps({"type":"done", "status":"completed", "duration":0.1}), flush=True)
     """
     try Data(script.utf8).write(to: executable)
@@ -190,23 +196,29 @@ func creationChecks() async throws {
     store.setPromptEnhancementEnabled(false)
     store.imageCount = 3
     store.prompt = "Batch scene"
+    let historyCount = store.generations.count
     store.generate()
-    try check(store.isRunning && store.prompt.isEmpty && store.batchProgress?.index == 1 && store.batchProgress?.total == 3,
-              "multi-image submission starts a batch and clears only the draft")
+    try check(store.isRunning && store.prompt.isEmpty && store.generations.count == historyCount + 1,
+              "multi-image submission creates one request and clears only the draft")
     try await wait({ store.isRunning })
-    let batch = store.selectedCreation
-    try check(batch.count == 3 && batch.allSatisfy { $0.status == .completed && $0.request.prompt == "Batch scene" }
-              && Set(batch.map(\.request.seed)).count == 3 && Set(batch.map(\.request.output)).count == 3
-              && batch.allSatisfy { fm.fileExists(atPath: $0.request.output) },
-              "batch generates each requested image in the same creation with its own seed and output")
-    try check(store.batchProgress == nil && store.imageCount == 3 && store.recentCreations.count == 2,
-              "finished batch keeps the chosen count and a single sidebar entry")
+    let batch = store.generations[0]
+    try check(store.selectedCreation.map(\.id) == [batch.id] && batch.status == .completed && batch.request.outputs.count == 3
+              && Set(batch.request.outputs.map(\.seed)).count == 3 && Set(batch.request.outputs.map(\.output)).count == 3
+              && batch.finishedOutputs.count == 3 && batch.finishedOutputs.allSatisfy { fm.fileExists(atPath: $0) },
+              "one request holds every output image, each with its own seed")
+    try check(store.imageProgress == nil && store.imageCount == 3 && store.recentCreations.count == 2,
+              "finished request keeps the chosen count and a single sidebar entry")
+    let reloaded = AppStore().generations.first { $0.id == batch.id }
+    try check(reloaded?.request.outputs == batch.request.outputs && reloaded?.finishedOutputs == batch.finishedOutputs,
+              "multi-image request survives relaunch with every seed and output")
     store.newGeneration(); store.setPromptEnhancementEnabled(false); store.imageCount = 3
     store.prompt = "Slow batch"
     store.generate()
-    try await Task.sleep(for: .milliseconds(300))
+    for _ in 0..<500 where store.generations[0].completedImages < 1 { try await Task.sleep(for: .milliseconds(10)) }
     store.stop()
     try await wait({ store.isRunning })
-    try check(store.selectedCreation.count == 1 && store.selectedCreation[0].status == .cancelled && store.batchProgress == nil,
-              "stopping a batch cancels the current image and every remaining one")
+    let stopped = store.generations[0]
+    try check(store.selectedCreation.count == 1 && stopped.status == .cancelled && stopped.finishedOutputs.count == 1
+              && fm.fileExists(atPath: stopped.finishedOutputs[0]) && !fm.fileExists(atPath: stopped.request.outputs[1].output),
+              "stopping keeps finished images and cancels the remaining ones")
 }

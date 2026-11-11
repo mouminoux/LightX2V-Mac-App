@@ -1,4 +1,5 @@
 // Interface strings. Operational logs always use English.
+"%@ of %@ images" = "%@ von %@ Bildern";
 "\nEstimated remaining " = "\nGeschätzte Restzeit ";
 "\nFile reconstruction " = "\nDateirekonstruktion ";
 "\nNetwork speed " = "\nNetzwerkgeschwindigkeit ";

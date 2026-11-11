@@ -27,6 +27,8 @@ struct GenerationSnapshot: Codable {
         var height: Int?
         var steps: Int
         var seed: Int64
+        /// Every image's seed, in output order; present only for multi-image requests.
+        var seeds: [Int64]?
     }
     struct Enhancement: Codable {
         var enabled: Bool
@@ -55,6 +57,8 @@ struct GenerationSnapshot: Codable {
         var finishedAt: String?
         var durationSeconds: Double?
         var inferenceDurationSeconds: Double?
+        /// Finished images of a multi-image request; single-image records derive it from status.
+        var completedImages: Int?
         var error: String?
     }
 
@@ -66,7 +70,8 @@ struct GenerationSnapshot: Codable {
         let size = GenerationSize(width: request.width, height: request.height, automaticResolution: request.resolution)
         parameters = Parameters(resolution: size.resolution.baseDimension, aspectRatio: request.resolution == nil ? (size.aspectRatio?.rawValue ?? "adaptive") : "adaptive",
                                 width: job.actualWidth ?? request.width, height: job.actualHeight ?? request.height,
-                                steps: QwenImage21Turbo.inferenceSteps, seed: request.seed)
+                                steps: QwenImage21Turbo.inferenceSteps, seed: request.seed,
+                                seeds: request.outputs.count > 1 ? request.outputs.map(\.seed) : nil)
         prompt = request.prompt
         promptEnhancement = Enhancement(enabled: request.promptEnhancement != nil)
         if let resources = request.promptEnhancement {
@@ -88,17 +93,20 @@ struct GenerationSnapshot: Codable {
         }
         inputImages = request.inputImages
         // Retain the intended output path even for interrupted/failed tasks.
-        outputImages = [request.output]
+        outputImages = request.outputs.map(\.output)
         execution = Execution(directory: job.directory, sourceDirectory: request.repository, python: job.python,
                               requestFile: job.directory + "/request.json", logFile: job.directory + "/run.log",
                               startedAt: createdAt, inferenceStartedAt: job.inferenceStartedAt?.ISO8601Format(),
                               finishedAt: job.finishedAt?.ISO8601Format(), durationSeconds: job.duration,
-                              inferenceDurationSeconds: job.inferenceDuration, error: job.error)
+                              inferenceDurationSeconds: job.inferenceDuration,
+                              completedImages: request.outputs.count > 1 ? job.completedImages : nil, error: job.error)
     }
 
     func generation() throws -> Generation {
         guard model.name == QwenImage21Turbo.title, parameters.steps == QwenImage21Turbo.inferenceSteps,
-              let output = outputImages.first, outputImages.count == 1,
+              let output = outputImages.first,
+              outputImages.count == 1 ? parameters.seeds == nil : parameters.seeds?.count == outputImages.count && parameters.seeds?.first == parameters.seed,
+              (execution.completedImages ?? 0) <= outputImages.count,
               let created = ISO8601DateFormatter().date(from: createdAt) else {
             throw AppError.message("Invalid generation snapshot")
         }
@@ -138,12 +146,14 @@ struct GenerationSnapshot: Codable {
             "inputImages": inputImages.map { ["path": $0.path, "name": $0.name] }
         ])
         var request = try JSONDecoder().decode(InferenceRequest.self, from: data)
+        if let seeds = parameters.seeds { request.outputs = zip(seeds, outputImages).map { OutputImage(seed: $0, output: $1) } }
         request.promptEnhancement = promptEnhancement.enabled ? settings.promptEnhancement : nil
         var job = Generation(id: id, creationID: creationID, request: request)
         job.createdAt = created; job.status = status; job.enhancement = reply
         job.python = execution.python; job.actualWidth = parameters.width; job.actualHeight = parameters.height
         job.duration = execution.durationSeconds; job.error = execution.error
         job.inferenceDuration = execution.inferenceDurationSeconds
+        job.completedImages = execution.completedImages ?? (status == .completed ? request.outputs.count : 0)
         if let started = execution.inferenceStartedAt {
             guard let date = ISO8601DateFormatter().date(from: started) else { throw AppError.message("Invalid inferenceStartedAt") }
             job.inferenceStartedAt = date

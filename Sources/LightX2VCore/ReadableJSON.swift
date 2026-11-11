@@ -16,9 +16,9 @@ enum ReadableJSON {
         } else if object["updatedAt"] != nil {
             fields = ["modelName", "parameters", "promptEnhancement", "updatedAt"]
         } else if object["aspectRatio"] != nil {
-            fields = ["resolution", "aspectRatio", "imageCount", "width", "height", "steps", "seed"]
+            fields = ["resolution", "aspectRatio", "imageCount", "width", "height", "steps", "seed", "seeds"]
         } else if object["startedAt"] != nil {
-            fields = ["directory", "sourceDirectory", "python", "requestFile", "logFile", "startedAt", "inferenceStartedAt", "finishedAt", "durationSeconds", "inferenceDurationSeconds", "error"]
+            fields = ["directory", "sourceDirectory", "python", "requestFile", "logFile", "startedAt", "inferenceStartedAt", "finishedAt", "durationSeconds", "inferenceDurationSeconds", "completedImages", "error"]
         } else if object["seed"] != nil && object["steps"] != nil {
             fields = ["resolution", "aspectRatio", "width", "height", "steps", "seed"]
         } else if object["configFile"] != nil {
@@ -26,7 +26,7 @@ enum ReadableJSON {
         } else if object["enabled"] != nil {
             fields = ["enabled", "mode", "status", "modelName", "directory", "modelFile", "systemPromptFile", "visionProjectorFile", "runtimeDirectory", "t2iDirectory", "i2iDirectory", "t2iModel", "t2iSystemPrompt", "i2iModel", "i2iSystemPrompt", "visionProjector", "thinking", "output", "whRatio", "ratioFollow", "durationSeconds"]
         } else {
-            fields = ["workingDirectory", "python", "Qwen-Image-2.1-Turbo", "modelDirectory", "modelDownloadSource", "promptEnhancement", "repository", "model", "config", "prompt", "resolution", "width", "height", "seed", "inputImages", "output", "generation", "path", "name"]
+            fields = ["workingDirectory", "python", "Qwen-Image-2.1-Turbo", "modelDirectory", "modelDownloadSource", "promptEnhancement", "repository", "model", "config", "prompt", "resolution", "width", "height", "seed", "inputImages", "output", "outputs", "generation", "path", "name"]
         }
         let specified = fields.filter { object[$0] != nil }
         // Unspecified extension fields follow the defined groups; production
