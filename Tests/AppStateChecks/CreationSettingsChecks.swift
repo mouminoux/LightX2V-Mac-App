@@ -75,16 +75,20 @@ func creationSettingsChecks() async throws {
     store.selectedID = first.id; store.selectedID = second.id
     host.layoutSubtreeIfNeeded(); try await Task.sleep(for: .milliseconds(100))
     try check(control.selectedSegment == 0 && store.generationSize.aspectRatio == .portrait916, "native parameter panel displays restored creation state")
+    let carriedSize = store.generationSize, carriedPE = store.settings.promptEnhancement.enabled
+    store.imageCount = 2
     store.newGeneration()
     let draftID = store.currentCreationID
-    try check(draftID != firstID && draftID != secondID && store.generationSize.resolution == .oneK && store.generationSize.aspectRatio == nil && store.settings.promptEnhancement.enabled,
-              "new creation starts with 1K, adaptive and PE enabled")
+    saved = try JSONFile.read(WorkspaceData.self, from: layout.state)
+    try check(draftID != firstID && draftID != secondID && store.generationSize.resolution == carriedSize.resolution && store.generationSize.aspectRatio == carriedSize.aspectRatio && store.settings.promptEnhancement.enabled == carriedPE
+              && store.imageCount == 2 && saved.creationSettings[draftID.uuidString]?.parameters.imageCount == 2,
+              "new creation keeps the previous creation's size, image count and PE")
+    store.imageCount = 1
     store.generationSize.selectResolution(.fiveTwelve); store.generationSize.selectAspectRatio(.square)
     store.setPromptEnhancementEnabled(false)
     let restoredDraft = AppStore()
     try check(restoredDraft.selectedID == nil && restoredDraft.currentCreationID == draftID && restoredDraft.generationSize.resolution == .fiveTwelve && restoredDraft.generationSize.aspectRatio == .square && !restoredDraft.settings.promptEnhancement.enabled,
               "an ungenerated draft's parameters survive relaunch")
-    try check(store.imageCount == 1, "new creation defaults to one image")
     store.imageCount = 4
     saved = try JSONFile.read(WorkspaceData.self, from: layout.state)
     try check(AppStore().imageCount == 4 && saved.creationSettings[draftID.uuidString]?.parameters.imageCount == 4,

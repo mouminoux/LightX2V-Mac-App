@@ -240,8 +240,9 @@ final class AppStore: ObservableObject {
         guard !isImportingImages else { return }
         restoringCreationParameters = true
         selectedID = nil; prompt = ""; showLogs = false
+        // A new creation inherits the current size, image count and prompt
+        // enhancement so settings carry over from one creation to the next.
         draftCreationID = UUID()
-        generationSize = GenerationSize(); imageCount = 1; settings.promptEnhancement.enabled = true
         restoringCreationParameters = false
         clearInputImages()
         saveCreationParameters()

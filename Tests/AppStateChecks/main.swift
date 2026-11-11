@@ -156,9 +156,10 @@ struct AppStateChecks {
         store.reuse(Generation(request: automatic))
         try check(store.generationSize.aspectRatio == nil && store.generationSize.resolution == .twoK && store.width == nil && store.height == nil && store.inputImages == saved,
                   "reuse restores automatic 2K with reference images and no fixed dimensions")
+        let reusedSize = store.generationSize
         store.newGeneration()
-        try check(store.generationSize.aspectRatio == nil && store.generationSize.automaticResolution == 1024,
-                  "new creation resets size selection to automatic 1K")
+        try check(store.generationSize.resolution == reusedSize.resolution && store.generationSize.aspectRatio == reusedSize.aspectRatio && store.generationSize.automaticResolution == 2048 && store.inputImages.isEmpty && store.prompt.isEmpty,
+                  "new creation keeps the size selection and clears only the draft")
         store.reuse(generation)
         store.removeInputImage(store.inputImages[0])
         try check(store.inputImages.isEmpty && fm.fileExists(atPath: saved[0].path), "removing reused input never deletes history snapshot")
@@ -183,8 +184,8 @@ struct AppStateChecks {
         try check(exitCompleted && !fm.fileExists(atPath: exitDraft) && fm.fileExists(atPath: saved[0].path), "termination cleans draft and preserves history")
         let reopened = AppStore()
         try check(reopened.selectedModel == nil && reopened.inputImages.isEmpty && reopened.generations[0].request.inputImages == saved, "relaunch keeps references in history and starts with empty draft/model")
-        try check(reopened.generationSize.automaticResolution == 1024 && reopened.width == nil && reopened.height == nil,
-                  "relaunch defaults to automatic 1K regardless of history")
+        try check(reopened.width == 1376 && reopened.height == 768,
+                  "relaunch restores the active creation's saved size")
         try check(reopened.generations[0].status == .interrupted, "relaunch recovers interrupted image task")
         // A launch failure must not discard the user's prompt or attached files.
         let source = root.appendingPathComponent("fake-source/lightx2v")

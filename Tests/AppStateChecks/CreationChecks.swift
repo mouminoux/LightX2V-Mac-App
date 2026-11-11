@@ -140,7 +140,7 @@ func creationChecks() async throws {
     try check(fourth.creationID == first.creationID && fourth.request.inputImages.isEmpty && store.selectedCreation.count == 5,
               "normal generation after reference remains text-only in the same conversation")
     store.newGeneration()
-    store.setPromptEnhancementEnabled(false) // New creations enable PE; this fixture has no PE models.
+    store.setPromptEnhancementEnabled(false) // This fixture has no PE models.
     let fifth = try await submit("Explicitly new creation")
     try check(fifth.creationID != first.creationID && store.recentCreations.count == 2 && store.selectedCreation.count == 1,
               "only explicit New Creation starts a separate conversation")
@@ -192,7 +192,6 @@ func creationChecks() async throws {
     try check(store.generations.map(\.id) == [fifth.id] && fm.fileExists(atPath: first.request.output),
               "removing a creation removes all its history turns and preserves output files")
     store.newGeneration()
-    try check(store.imageCount == 1, "new creation defaults to generating one image")
     store.setPromptEnhancementEnabled(false)
     store.imageCount = 3
     store.prompt = "Batch scene"
